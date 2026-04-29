@@ -1,0 +1,9 @@
+CREATE ROLE eventing_service LOGIN PASSWORD 'youthEventing-service-01';
+CREATE ROLE identity_service LOGIN PASSWORD 'youthIdentity-service-02';
+CREATE ROLE file_service LOGIN PASSWORD 'youthFile-service-03';
+CREATE ROLE archiving_service LOGIN PASSWORD 'youthArchiving-service-04';
+CREATE ROLE budget_service LOGIN PASSWORD 'youthBudget-service-05';
+CREATE ROLE project_service LOGIN PASSWORD 'youthProjectExec-service-06';
+CREATE ROLE expenditure_service LOGIN PASSWORD 'youthExpVerif-service-07';
+CREATE ROLE cms_service LOGIN PASSWORD 'youthCMS-service-08';
+CREATE ROLE audit_service LOGIN PASSWORD 'youthAudit-service-09';
