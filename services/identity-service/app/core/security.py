@@ -18,13 +18,13 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 # ── JWKS / OIDC Discovery ─────────────────────────────────────────────────
 
-@lru_cache(maxsize=1)
-def _get_jwks() -> dict:
+@lru_cache(maxsize=4)
+def _get_jwks_for_slug(slug: str) -> dict:
     """
     Fetches Authentik's public signing keys via OIDC discovery.
     Result is cached in-process. Restart backend to force a refresh.
     """
-    discovery_url = f"{settings.AUTHENTIK_URL}/application/o/{settings.AUTHENTIK_SLUG}/.well-known/openid-configuration"
+    discovery_url = f"{settings.AUTHENTIK_URL}/application/o/{slug}/.well-known/openid-configuration"
     r = httpx.get(discovery_url, timeout=10)
     r.raise_for_status()
     jwks_uri = r.json()["jwks_uri"]
@@ -34,26 +34,61 @@ def _get_jwks() -> dict:
     return r2.json()
 
 
+def _get_jwks() -> dict:
+    keys = []
+    seen_key_ids = set()
+    for slug in (settings.AUTHENTIK_SLUG, settings.MAINSYS_AUTHENTIK_SLUG):
+        if not slug:
+            continue
+
+        for key in _get_jwks_for_slug(slug).get("keys", []):
+            key_id = key.get("kid")
+            if key_id and key_id in seen_key_ids:
+                continue
+            if key_id:
+                seen_key_ids.add(key_id)
+            keys.append(key)
+
+    return {"keys": keys}
+
+
 def decode_authentik_token(token: str) -> dict:
     """
     Validates an Authentik-issued JWT (RS256) against Authentik's public JWKS.
     Returns the decoded payload on success, raises HTTPException on failure.
     """
+    audiences = [
+        audience
+        for audience in (settings.AUTHENTIK_CLIENT_ID, settings.MAINSYS_CLIENT_ID)
+        if audience
+    ]
+    last_error = None
+
     try:
         jwks = _get_jwks()
-        payload = jwt.decode(
-            token,
-            jwks,
-            algorithms=["RS256"],
-            audience=settings.AUTHENTIK_CLIENT_ID,
-            options={"verify_at_hash": False},
-        )
-        return payload
-    except JWTError as e:
+    except httpx.HTTPError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid or expired token: {e}",
+            detail=f"Could not load Authentik signing keys: {e}",
         )
+
+    for audience in audiences:
+        try:
+            return jwt.decode(
+                token,
+                jwks,
+                algorithms=["RS256"],
+                audience=audience,
+                options={"verify_at_hash": False},
+            )
+        except JWTError as e:
+            last_error = e
+
+    detail = f"Invalid or expired token: {last_error}" if last_error else "No Authentik client IDs configured"
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+    )
 
 
 # ── Current User Dependency ───────────────────────────────────────────────

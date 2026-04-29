@@ -197,3 +197,22 @@ async def me(
         primary_role   = primary_role,
         can_access_account_management = await has_account_management_access(account, db),
     )
+
+@router.get("/exchange")
+async def exchange_code(code: str, redirect_uri: str):
+    async with httpx.AsyncClient() as client:
+        r = await client.post(
+            AUTHENTIK_TOKEN_URL,
+            data={
+                "grant_type":    "authorization_code",
+                "code":          code,
+                "redirect_uri":  redirect_uri,
+                "client_id":     settings.MAINSYS_CLIENT_ID,
+                "client_secret": settings.MAINSYS_CLIENT_SECRET,
+            },
+            timeout=15,
+        )
+        if r.status_code != 200:
+            raise HTTPException(502, f"Authentik token exchange failed: {r.text}")
+        tokens = r.json()
+        return {"access_token": tokens.get("access_token")}

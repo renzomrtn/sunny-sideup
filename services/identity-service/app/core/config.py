@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # Seed admin
     SEED_ADMIN_AUTH_ID: str = "18f71d90-5003-4df1-a0b1-ff445e454f30"
 
+    MAINSYS_CLIENT_ID:     str = ""
+    MAINSYS_CLIENT_SECRET: str = ""
+    MAINSYS_AUTHENTIK_SLUG: str = "youth-mainsys"
+
     # ── Pagination ────────────────────────────────────
     DEFAULT_PAGE_SIZE: int = 20
 

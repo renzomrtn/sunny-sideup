@@ -219,19 +219,20 @@ services:
       - cms-service
     restart: unless-stopped
 
-  youth-portalsys:
-    build:
-      context: ./frontends/youth-portalsys
-      dockerfile: Dockerfile
-    container_name: pmm_portalsys
-    env_file: ./frontends/youth-portalsys/.env
-    ports:
-      - "8092:80"
-    volumes:
-      - ./nginx/nginx-portalsys.conf:/etc/nginx/http.d/default.conf:ro
-    depends_on:
-      - cms-service
-    restart: unless-stopped
+  # Not in use
+  # youth-portalsys:
+  #  build:
+  #    context: ./frontends/youth-portalsys
+  #    dockerfile: Dockerfile
+  #  container_name: pmm_portalsys
+  #  env_file: ./frontends/youth-portalsys/.env
+  #  ports:
+  #    - "8092:80"
+  #  volumes:
+  #    - ./nginx/nginx-portalsys.conf:/etc/nginx/http.d/default.conf:ro
+  #  depends_on:
+  #    - cms-service
+  #  restart: unless-stopped
 
 # ── Volumes ───────────────────────────────────────────────────────────────
 
