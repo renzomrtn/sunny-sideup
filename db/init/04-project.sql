@@ -108,17 +108,26 @@ ALTER TABLE Project_Task            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE Project_Task_Assignment ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY rls_project ON Project
-    USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::INT);
+    USING (
+        tenant_id = current_setting('app.current_tenant_id', TRUE)::INT
+        OR current_setting('app.current_tenant_id', TRUE)::INT = 1
+    );
 
 CREATE POLICY rls_committee_category ON Committee_Category
-    USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::INT);
+    USING (
+        tenant_id = current_setting('app.current_tenant_id', TRUE)::INT
+        OR current_setting('app.current_tenant_id', TRUE)::INT = 1
+    );
 
 CREATE POLICY rls_project_committee ON Project_Committee
     USING (
         EXISTS (
             SELECT 1 FROM Project p
             WHERE p.project_id = Project_Committee.project_id
-              AND p.tenant_id = current_setting('app.current_tenant_id', TRUE)::INT
+              AND (
+                  p.tenant_id = current_setting('app.current_tenant_id', TRUE)::INT
+                  OR current_setting('app.current_tenant_id', TRUE)::INT = 1
+              )
         )
     );
 
@@ -128,7 +137,35 @@ CREATE POLICY rls_committee_member ON Committee_Member
             SELECT 1 FROM Project_Committee pc
             JOIN Project p ON p.project_id = pc.project_id
             WHERE pc.committee_id = Committee_Member.committee_id
-              AND p.tenant_id = current_setting('app.current_tenant_id', TRUE)::INT
+              AND (
+                  p.tenant_id = current_setting('app.current_tenant_id', TRUE)::INT
+                  OR current_setting('app.current_tenant_id', TRUE)::INT = 1
+              )
+        )
+    );
+
+CREATE POLICY rls_project_task ON Project_Task
+    USING (
+        EXISTS (
+            SELECT 1 FROM Project p
+            WHERE p.project_id = Project_Task.project_id
+              AND (
+                  p.tenant_id = current_setting('app.current_tenant_id', TRUE)::INT
+                  OR current_setting('app.current_tenant_id', TRUE)::INT = 1
+              )
+        )
+    );
+
+CREATE POLICY rls_project_task_assignment ON Project_Task_Assignment
+    USING (
+        EXISTS (
+            SELECT 1 FROM Project_Task pt
+            JOIN Project p ON p.project_id = pt.project_id
+            WHERE pt.task_id = Project_Task_Assignment.task_id
+              AND (
+                  p.tenant_id = current_setting('app.current_tenant_id', TRUE)::INT
+                  OR current_setting('app.current_tenant_id', TRUE)::INT = 1
+              )
         )
     );
 

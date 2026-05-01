@@ -47,15 +47,19 @@ async def get_current_role(
 
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(
-            f"{settings.IDENTITY_SERVICE_URL}/api/auth/account",
+            f"{settings.IDENTITY_SERVICE_URL}/api/auth/me",
             headers={"Authorization": f"Bearer {token}"},
         )
     if r.status_code != 200:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     account = r.json()
+    roles = account.get("tenant_roles") or []
+    if account.get("primary_role"):
+        roles.append(account["primary_role"])
+
     eligible = [
-        role for role in account.get("tenant_roles", [])
+        role for role in roles
         if role["role_status"] == "Active"
         and role["tenant_id"] == tenant_id
         and role["position_name"] != "Account Management Administrator"
@@ -74,6 +78,10 @@ async def _set_tenant(db: AsyncSession, tenant_id: int):
         text("SELECT set_config('app.current_tenant_id', :tid, true)"),
         {"tid": str(tenant_id)},
     )
+
+
+def _can_view_all_tenants(role: dict) -> bool:
+    return role.get("tenant_id") == 1
 
 
 async def _publish_event(
@@ -109,7 +117,15 @@ def _make_role_snapshot(role: dict) -> dict:
 
 # ── Helper: load a project with all relations ───────────────────────────────
 
-async def _get_project_full(project_id: int, tenant_id: int, db: AsyncSession) -> Project:
+async def _get_project_full(
+    project_id: int,
+    tenant_id: Optional[int],
+    db: AsyncSession,
+) -> Project:
+    conditions = [Project.project_id == project_id]
+    if tenant_id is not None:
+        conditions.append(Project.tenant_id == tenant_id)
+
     result = await db.execute(
         select(Project)
         .options(
@@ -117,7 +133,7 @@ async def _get_project_full(project_id: int, tenant_id: int, db: AsyncSession) -
             selectinload(Project.committees).selectinload(ProjectCommittee.category),
             selectinload(Project.tasks).selectinload(ProjectTask.assignments),
         )
-        .where(Project.project_id == project_id, Project.tenant_id == tenant_id)
+        .where(*conditions)
     )
     project = result.scalar_one_or_none()
     if not project:
@@ -129,15 +145,16 @@ async def _get_project_full(project_id: int, tenant_id: int, db: AsyncSession) -
 
 @router.get("/committee-categories", response_model=List[CommitteeCategoryRead])
 async def list_committee_categories(
+    include_all_tenants: bool = Query(False),
     role: dict = Depends(get_current_role),
     db: AsyncSession = Depends(get_db),
 ):
     await _set_tenant(db, role["tenant_id"])
-    result = await db.execute(
-        select(CommitteeCategory)
-        .where(CommitteeCategory.tenant_id == role["tenant_id"])
-        .order_by(CommitteeCategory.category_name)
-    )
+    q = select(CommitteeCategory)
+    if not (include_all_tenants and _can_view_all_tenants(role)):
+        q = q.where(CommitteeCategory.tenant_id == role["tenant_id"])
+    q = q.order_by(CommitteeCategory.category_name)
+    result = await db.execute(q)
     return result.scalars().all()
 
 
@@ -190,11 +207,15 @@ async def delete_committee_category(
 @router.get("", response_model=List[ProjectListItem])
 async def list_projects(
     project_status: Optional[ProjectStatusEnum] = Query(None),
+    include_all_tenants: bool = Query(False),
     role: dict = Depends(get_current_role),
     db: AsyncSession = Depends(get_db),
 ):
     await _set_tenant(db, role["tenant_id"])
-    q = select(Project).where(Project.tenant_id == role["tenant_id"])
+    can_view_all = include_all_tenants and _can_view_all_tenants(role)
+    q = select(Project)
+    if not can_view_all:
+        q = q.where(Project.tenant_id == role["tenant_id"])
     if project_status:
         q = q.where(Project.project_status == project_status)
     q = q.order_by(Project.project_id.desc())
@@ -237,7 +258,8 @@ async def get_project(
     db: AsyncSession = Depends(get_db),
 ):
     await _set_tenant(db, role["tenant_id"])
-    return await _get_project_full(project_id, role["tenant_id"], db)
+    tenant_id = None if _can_view_all_tenants(role) else role["tenant_id"]
+    return await _get_project_full(project_id, tenant_id, db)
 
 
 @router.patch("/{project_id}", response_model=ProjectRead)
