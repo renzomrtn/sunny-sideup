@@ -93,11 +93,13 @@ class ProjectTaskRead(BaseModel):
 # ── Project ─────────────────────────────────────────────────────────────────
 
 class ProjectCreate(BaseModel):
-    line_item_id: int
-    line_item_snapshot: dict
+    line_item_id: str          # stored as a code string, e.g. "LI-2025-001"
+    line_item_snapshot: dict = {}   # can be sent by frontend; defaults to empty
     project_title: Optional[str] = None
     date_started: Optional[date] = None
     date_accomplished: Optional[date] = None
+    # Committees to create atomically with the project
+    committees: List["ProjectCommitteeCreate"] = []
 
 class ProjectUpdate(BaseModel):
     project_title: Optional[str] = None
@@ -110,7 +112,7 @@ class ProjectRead(BaseModel):
     tenant_id: int
     proponent_role_id: int
     proponent_snapshot: dict
-    line_item_id: int
+    line_item_id: str
     line_item_snapshot: dict
     project_title: Optional[str] = None
     date_started: Optional[date] = None
@@ -125,7 +127,7 @@ class ProjectListItem(BaseModel):
     tenant_id: int
     proponent_role_id: int
     proponent_snapshot: dict
-    line_item_id: int
+    line_item_id: str
     line_item_snapshot: dict
     project_title: Optional[str] = None
     date_started: Optional[date] = None

@@ -126,6 +126,12 @@ class AccountListItem(BaseModel):
     synced_at:        datetime
     primary_tenant:   Optional[str] = None
     primary_position: Optional[str] = None
+    # Populated by the /tenants/{id}/officials endpoint so callers
+    # (e.g. project-service committee creation) get role_id + snapshot
+    # without a second round-trip.
+    role_id:          Optional[int] = None
+    position_name:    Optional[str] = None
+    tenant_name:      Optional[str] = None
     model_config = {"from_attributes": True}
 
 

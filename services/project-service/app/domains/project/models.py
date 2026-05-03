@@ -55,7 +55,7 @@ class Project(Base):
     tenant_id:          Mapped[int]  = mapped_column(Integer, nullable=False)
     proponent_role_id:  Mapped[int]  = mapped_column(Integer, nullable=False)
     proponent_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    line_item_id:       Mapped[int]  = mapped_column(Integer, nullable=False)
+    line_item_id:       Mapped[str]  = mapped_column(String(50), nullable=False)
     line_item_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
     project_title:      Mapped[Optional[str]] = mapped_column(String(255))
     date_started:       Mapped[Optional[date]] = mapped_column(Date)

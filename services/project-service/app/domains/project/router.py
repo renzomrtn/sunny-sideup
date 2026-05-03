@@ -62,7 +62,6 @@ async def get_current_role(
         role for role in roles
         if role["role_status"] == "Active"
         and role["tenant_id"] == tenant_id
-        and role["position_name"] != "Account Management Administrator"
     ]
     if not eligible:
         raise HTTPException(status_code=403, detail="No active role in this tenant")
@@ -232,14 +231,44 @@ async def create_project(
     await _set_tenant(db, role["tenant_id"])
     snapshot = _make_role_snapshot(role)
 
+    # Exclude committees — handled separately below
+    project_fields = body.model_dump(exclude={"committees"})
+
     project = Project(
         tenant_id=role["tenant_id"],
         proponent_role_id=role["role_id"],
         proponent_snapshot=snapshot,
         project_status=ProjectStatusEnum.PENDING,
-        **body.model_dump(),
+        **project_fields,
     )
     db.add(project)
+    await db.flush()
+
+    # Create committees atomically with the project
+    for committee_data in body.committees:
+        cat_result = await db.execute(
+            select(CommitteeCategory).where(
+                CommitteeCategory.committee_cat_id == committee_data.committee_cat_id,
+                CommitteeCategory.tenant_id == role["tenant_id"],
+            )
+        )
+        if not cat_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Committee category {committee_data.committee_cat_id} not found",
+            )
+
+        committee = ProjectCommittee(
+            project_id=project.project_id,
+            committee_cat_id=committee_data.committee_cat_id,
+        )
+        db.add(committee)
+        await db.flush()
+
+        for m in committee_data.members:
+            member = CommitteeMember(committee_id=committee.committee_id, **m.model_dump())
+            db.add(member)
+
     await db.flush()
 
     await _publish_event(
