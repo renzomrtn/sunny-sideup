@@ -265,7 +265,14 @@ async def create_project(
         db.add(committee)
         await db.flush()
 
+        seen_roles = set()
         for m in committee_data.members:
+            if m.role_id in seen_roles:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Duplicate member role_id={m.role_id} in committee category {committee_data.committee_cat_id}",
+                )
+            seen_roles.add(m.role_id)
             member = CommitteeMember(committee_id=committee.committee_id, **m.model_dump())
             db.add(member)
 

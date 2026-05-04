@@ -51,7 +51,19 @@ async def assign_role(payload: RoleAssignRequest, _: Account = Depends(get_curre
     if payload.role_status == "Active":
         try: await ensure_position_capacity(db, payload.tenant_id, payload.position_id)
         except ValueError as e: raise HTTPException(409, str(e))
-    if payload.is_primary_tenant:
+    # Auto-promote to primary if the account has no primary role yet,
+    # regardless of what the caller sent. This prevents users getting locked
+    # out with primary_role=null after their first role assignment.
+    has_primary = (await db.execute(
+        select(AccountTenantRole).where(
+            AccountTenantRole.account_id      == payload.account_id,
+            AccountTenantRole.is_primary_tenant == True,
+        )
+    )).scalar_one_or_none() is not None
+
+    make_primary = payload.is_primary_tenant or (not has_primary and payload.tenant_id != 1)
+
+    if make_primary:
         for op in (await db.execute(select(AccountTenantRole).where(
             AccountTenantRole.account_id == payload.account_id,
             AccountTenantRole.is_primary_tenant == True,
@@ -60,7 +72,7 @@ async def assign_role(payload: RoleAssignRequest, _: Account = Depends(get_curre
     role = AccountTenantRole(
         account_id=payload.account_id, auth_external_id=account.auth_external_id,
         tenant_id=payload.tenant_id, position_id=payload.position_id,
-        is_primary_tenant=payload.is_primary_tenant, role_status=payload.role_status,
+        is_primary_tenant=make_primary, role_status=payload.role_status,
     )
     db.add(role); await db.commit(); await db.refresh(role)
     return await _build_role_read(role, db)
