@@ -245,5 +245,6 @@ class CurrentUserRead(BaseModel):
     contact_email:  Optional[str]      = None
     account_status: str
     primary_role:   Optional[RoleInAccount] = None
+    tenant_roles:   List[RoleInAccount] = []
     can_access_account_management: bool = False
     model_config = {"from_attributes": True}

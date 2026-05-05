@@ -167,34 +167,42 @@ async def me(
     account: Account      = Depends(get_current_account),
     db:      AsyncSession = Depends(get_db),
 ):
-    """Return the currently authenticated user's profile and primary role."""
-    role_result = await db.execute(
+    """Return the currently authenticated user's profile and all active roles."""
+    all_roles_result = await db.execute(
         select(AccountTenantRole).where(
-            AccountTenantRole.account_id        == account.account_id,
-            AccountTenantRole.is_primary_tenant == True,
-            AccountTenantRole.role_status       == "Active",
+            AccountTenantRole.account_id  == account.account_id,
+            AccountTenantRole.role_status == "Active",
         )
     )
-    pri = role_result.scalar_one_or_none()
+    all_roles = all_roles_result.scalars().all()
+
     primary_role = None
-    if pri:
-        t = await db.get(Tenant,      pri.tenant_id)
-        p = await db.get(JobPosition, pri.position_id)
-        primary_role = RoleInAccount(
-            role_id           = pri.role_id,
-            tenant_id         = pri.tenant_id,
+    tenant_roles = []
+
+    for role in all_roles:
+        t = await db.get(Tenant,       role.tenant_id)
+        p = await db.get(JobPosition,  role.position_id)
+        role_read = RoleInAccount(
+            role_id           = role.role_id,
+            tenant_id         = role.tenant_id,
             tenant_name       = t.tenant_name   if t else "Unknown",
-            position_id       = pri.position_id,
+            position_id       = role.position_id,
             position_name     = p.position_name if p else "Unknown",
-            is_primary_tenant = pri.is_primary_tenant,
-            role_status       = pri.role_status,
+            is_primary_tenant = role.is_primary_tenant,
+            role_status       = role.role_status,
         )
+        if role.is_primary_tenant:
+            primary_role = role_read
+        else:
+            tenant_roles.append(role_read)
+
     return CurrentUserRead(
         account_id     = account.account_id,
         full_name      = account.full_name,
         contact_email  = account.contact_email,
         account_status = account.account_status,
         primary_role   = primary_role,
+        tenant_roles   = tenant_roles,
         can_access_account_management = await has_account_management_access(account, db),
     )
 
