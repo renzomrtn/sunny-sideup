@@ -93,14 +93,16 @@ class ProjectTaskRead(BaseModel):
 # ── Project ─────────────────────────────────────────────────────────────────
 
 class ProjectCreate(BaseModel):
-    line_item_id: str          # stored as a code string, e.g. "LI-2025-001"
-    line_item_snapshot: dict = {}   # can be sent by frontend; defaults to empty
+    line_item_id: str
+    line_item_snapshot: dict = {}
     project_title: Optional[str] = None
     date_started: Optional[date] = None
     date_accomplished: Optional[date] = None
-    # Committees to create atomically with the project
     committees: List["ProjectCommitteeCreate"] = []
-
+    # ── New fields ──
+    proponent_role_id: Optional[int] = None
+    proponent_snapshot: Optional[dict] = None
+    
 class ProjectUpdate(BaseModel):
     project_title: Optional[str] = None
     date_started: Optional[date] = None

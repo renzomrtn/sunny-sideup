@@ -215,4 +215,37 @@ async def exchange_code(code: str, redirect_uri: str):
         if r.status_code != 200:
             raise HTTPException(502, f"Authentik token exchange failed: {r.text}")
         tokens = r.json()
-        return {"access_token": tokens.get("access_token")}
+        return {
+            "access_token":  tokens.get("access_token"),
+            "refresh_token": tokens.get("refresh_token"),   # forward to frontend so it can refresh
+        }
+
+
+@router.post("/refresh")
+async def refresh_token(request: Request):
+    """Exchange a refresh_token for a new access_token via Authentik."""
+    body = await request.json()
+    refresh_tok = body.get("refresh_token")
+    if not refresh_tok:
+        raise HTTPException(status_code=400, detail="refresh_token is required")
+
+    async with httpx.AsyncClient() as client:
+        r = await client.post(
+            AUTHENTIK_TOKEN_URL,
+            data={
+                "grant_type":    "refresh_token",
+                "refresh_token": refresh_tok,
+                "client_id":     settings.MAINSYS_CLIENT_ID,
+                "client_secret": settings.MAINSYS_CLIENT_SECRET,
+            },
+            timeout=15,
+        )
+
+    if r.status_code != 200:
+        raise HTTPException(status_code=401, detail="Refresh token expired or invalid")
+
+    tokens = r.json()
+    return {
+        "access_token":  tokens.get("access_token"),
+        "refresh_token": tokens.get("refresh_token", refresh_tok),  # Authentik may issue a new one
+    }

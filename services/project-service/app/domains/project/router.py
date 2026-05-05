@@ -63,10 +63,25 @@ async def get_current_role(
         if role["role_status"] == "Active"
         and role["tenant_id"] == tenant_id
     ]
-    if not eligible:
+
+    if eligible:
+        role = eligible[0]
+    elif account.get("account_status") == "Active":
+        # Account is valid in Authentik but has no role row yet in the identity DB
+        # (e.g. new Authentik user not yet assigned a position by an admin).
+        # Grant view-only access so they can at least see the data.
+        role = {
+            "role_id":       None,
+            "tenant_id":     tenant_id,
+            "tenant_name":   "Unknown",
+            "position_id":   None,
+            "position_name": "Member",   # treated as view-only
+            "role_status":   "Active",
+            "is_primary_tenant": False,
+        }
+    else:
         raise HTTPException(status_code=403, detail="No active role in this tenant")
 
-    role = eligible[0]
     role["_token"] = token
     role["full_name"] = account.get("full_name", "")
     return role
@@ -81,6 +96,43 @@ async def _set_tenant(db: AsyncSession, tenant_id: int):
 
 def _can_view_all_tenants(role: dict) -> bool:
     return role.get("tenant_id") == 1
+
+
+# ── Permission rules ─────────────────────────────────────────────────────────
+# Full write access: SK Secretary, SKF Secretary, Chief of Staff
+# View-only: everyone else (Chairperson, Councilor, Treasurer, Members, etc.)
+# "Done" column: only Chairpersons and Vice Chairpersons of a committee
+
+_FULL_WRITE_POSITIONS = {
+    "SK Secretary",
+    "SKF Secretary",
+    "Chief of Staff",
+}
+
+
+def _can_write(role: dict) -> bool:
+    """Returns True if the role has full write (create/edit/delete) access."""
+    return role.get("position_name") in _FULL_WRITE_POSITIONS
+
+
+def _require_write(role: dict):
+    """Raises 403 if the role is view-only."""
+    if not _can_write(role):
+        raise HTTPException(
+            status_code=403,
+            detail="Your role has view-only access. Only Secretaries and Chief of Staff can make changes.",
+        )
+
+
+def _get_effective_tenant_id(role: dict, project_tenant_id: int | None = None) -> int | None:
+    """
+    Returns the tenant_id to use when scoping DB queries.
+    Cross-tenant viewers (tenant_id == 1) see all projects regardless of which
+    barangay tenant owns them, so we return None to skip the tenant filter.
+    """
+    if _can_view_all_tenants(role):
+        return None
+    return role["tenant_id"]
 
 
 async def _publish_event(
@@ -229,15 +281,19 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
 ):
     await _set_tenant(db, role["tenant_id"])
-    snapshot = _make_role_snapshot(role)
+    _require_write(role)
 
-    # Exclude committees — handled separately below
-    project_fields = body.model_dump(exclude={"committees"})
+    # Use the submitted proponent if provided, otherwise fall back to self
+    actor_snapshot = _make_role_snapshot(role)
+    proponent_role_id = body.proponent_role_id or role["role_id"]
+    proponent_snapshot = body.proponent_snapshot or actor_snapshot
+
+    project_fields = body.model_dump(exclude={"committees", "proponent_role_id", "proponent_snapshot"})
 
     project = Project(
         tenant_id=role["tenant_id"],
-        proponent_role_id=role["role_id"],
-        proponent_snapshot=snapshot,
+        proponent_role_id=proponent_role_id,
+        proponent_snapshot=proponent_snapshot,
         project_status=ProjectStatusEnum.PENDING,
         **project_fields,
     )
@@ -281,7 +337,7 @@ async def create_project(
     await _publish_event(
         db, role["tenant_id"], "Project", project.project_id,
         "created",
-        {"actor": snapshot, "line_item_id": body.line_item_id, "title": body.project_title},
+        {"actor": actor_snapshot, "line_item_id": body.line_item_id, "title": body.project_title},
     )
 
     return await _get_project_full(project.project_id, role["tenant_id"], db)
@@ -306,7 +362,8 @@ async def update_project(
     db: AsyncSession = Depends(get_db),
 ):
     await _set_tenant(db, role["tenant_id"])
-    project = await _get_project_full(project_id, role["tenant_id"], db)
+    _require_write(role)
+    project = await _get_project_full(project_id, _get_effective_tenant_id(role), db)
 
     changed = body.model_dump(exclude_none=True)
     for field, value in changed.items():
@@ -331,7 +388,8 @@ async def update_project_status(
     db: AsyncSession = Depends(get_db),
 ):
     await _set_tenant(db, role["tenant_id"])
-    project = await _get_project_full(project_id, role["tenant_id"], db)
+    _require_write(role)
+    project = await _get_project_full(project_id, _get_effective_tenant_id(role), db)
 
     old_status = project.project_status
     project.project_status = body.project_status
@@ -355,7 +413,8 @@ async def cancel_project(
 ):
     """Soft-cancel: sets status to Cancelled instead of deleting."""
     await _set_tenant(db, role["tenant_id"])
-    project = await _get_project_full(project_id, role["tenant_id"], db)
+    _require_write(role)
+    project = await _get_project_full(project_id, _get_effective_tenant_id(role), db)
 
     if project.project_status == ProjectStatusEnum.CANCELLED:
         raise HTTPException(status_code=409, detail="Project is already cancelled")
@@ -380,8 +439,7 @@ async def list_committees(
     db: AsyncSession = Depends(get_db),
 ):
     await _set_tenant(db, role["tenant_id"])
-    # Confirm project belongs to tenant
-    await _get_project_full(project_id, role["tenant_id"], db)
+    await _get_project_full(project_id, _get_effective_tenant_id(role), db)
 
     result = await db.execute(
         select(ProjectCommittee)
@@ -399,7 +457,8 @@ async def add_committee(
     db: AsyncSession = Depends(get_db),
 ):
     await _set_tenant(db, role["tenant_id"])
-    await _get_project_full(project_id, role["tenant_id"], db)
+    _require_write(role)
+    await _get_project_full(project_id, _get_effective_tenant_id(role), db)
 
     # Verify the category belongs to this tenant
     cat_result = await db.execute(
@@ -454,7 +513,8 @@ async def remove_committee(
     db: AsyncSession = Depends(get_db),
 ):
     await _set_tenant(db, role["tenant_id"])
-    await _get_project_full(project_id, role["tenant_id"], db)
+    _require_write(role)
+    await _get_project_full(project_id, _get_effective_tenant_id(role), db)
 
     result = await db.execute(
         select(ProjectCommittee).where(
@@ -548,7 +608,7 @@ async def list_tasks(
     db: AsyncSession = Depends(get_db),
 ):
     await _set_tenant(db, role["tenant_id"])
-    await _get_project_full(project_id, role["tenant_id"], db)
+    await _get_project_full(project_id, _get_effective_tenant_id(role), db)
 
     q = (
         select(ProjectTask)
@@ -570,7 +630,7 @@ async def create_task(
     db: AsyncSession = Depends(get_db),
 ):
     await _set_tenant(db, role["tenant_id"])
-    await _get_project_full(project_id, role["tenant_id"], db)
+    await _get_project_full(project_id, _get_effective_tenant_id(role), db)
 
     task_data = body.model_dump(exclude={"assignee_member_ids"})
     task = ProjectTask(project_id=project_id, **task_data)
@@ -621,7 +681,17 @@ async def update_task(
     db: AsyncSession = Depends(get_db),
 ):
     await _set_tenant(db, role["tenant_id"])
-    await _get_project_full(project_id, role["tenant_id"], db)
+    await _get_project_full(project_id, _get_effective_tenant_id(role), db)
+
+    # Only Chairpersons and Vice Chairpersons (committee roles) or write-access
+    # positions can move a task to "Completed" (the Done column).
+    if body.task_status == TaskStatusEnum.COMPLETED:
+        _DONE_ALLOWED = {"SK Chairperson", "SKF President", "SKF Vice President"} | _FULL_WRITE_POSITIONS
+        if role.get("position_name") not in _DONE_ALLOWED:
+            raise HTTPException(
+                status_code=403,
+                detail="Only Chairpersons, Vice Chairpersons, or Secretaries can mark tasks as Done.",
+            )
 
     result = await db.execute(
         select(ProjectTask)
@@ -660,7 +730,8 @@ async def delete_task(
     db: AsyncSession = Depends(get_db),
 ):
     await _set_tenant(db, role["tenant_id"])
-    await _get_project_full(project_id, role["tenant_id"], db)
+    _require_write(role)
+    await _get_project_full(project_id, _get_effective_tenant_id(role), db)
 
     result = await db.execute(
         select(ProjectTask).where(
